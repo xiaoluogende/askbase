@@ -1,0 +1,88 @@
+# Askbase 本地开发环境
+#
+# 用法：
+#   cp .env.example .env                  # 第一次
+#   docker compose up -d                  # 只起 redis（mysql 走本机实例）
+#   docker compose --profile mysql up -d  # 需要容器版 MySQL 时（本机没装才用）
+#   docker compose logs -f redis          # 看日志
+#
+# ⚠️ db/ 下的三个 sql 只会在「数据卷为空」时执行一次。
+#    如果你改了 schema 或重新生成了 seed_sample.sql，必须
+#    docker compose down -v  再 up，否则改动不会生效。
+#    这是新手最常卡住的地方，别怀疑自己的 SQL 写错了。
+#
+# ⚠️ 国内网络：Docker Hub 直连通常不通，且 hub-mirror.c.163.com、
+#    docker.mirrors.ustc.edu.cn 等公共加速器已停服。拉不到镜像时用镜像站全名：
+#      docker pull docker.m.daocloud.io/redis/redis-stack-server:7.4.0-v0
+#      docker tag  docker.m.daocloud.io/redis/redis-stack-server:7.4.0-v0 \
+#                  redis/redis-stack-server:7.4.0-v0
+#    打好 tag 后 compose 就不会再去远程拉了。
+
+name: askbase
+
+services:
+  mysql:
+    # ⚠️ 默认不启动（见下方 profiles 说明）。
+    # 本机已装 MySQL 时它会占着 3306，容器版就映射到 3307，两者互不干扰。
+    # 用容器版：docker compose --profile mysql up -d
+    profiles: ["mysql"]
+    image: mysql:8.4
+    container_name: askbase-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_DATABASE: askbase
+      MYSQL_USER: ${DB_USER:-askbase}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-askbase123}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
+    ports:
+      - "${DB_PORT:-3307}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 注意：这里不要再挂 my.cnf 之类的配置文件。
+      # Windows 上 bind mount 进容器的文件权限是 777，MySQL 会以
+      # "World-writable config file ... is ignored" 为由直接忽略它。
+      # 字符集问题统一在 SQL 文件里用 SET NAMES utf8mb4 解决（见 db/schema.sql）。
+      #
+      # 按文件名顺序执行，所以加了数字前缀
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/schema_auth.sql:/docker-entrypoint-initdb.d/02-auth.sql:ro
+      - ./db/seed_sample.sql:/docker-entrypoint-initdb.d/03-seed.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root123}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  redis:
+    # 用 redis-stack 而不是普通 redis：向量检索依赖 RediSearch 模块
+    # 版本已固定为 7.4.0-v0（实测存在，含 RediSearch 2.10.5）
+    # 拉不到镜像时见下方「国内网络」说明
+    image: redis/redis-stack-server:7.4.0-v0
+    container_name: askbase-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # RabbitMQ 先不启：当前用不到，做长查询异步化时再打开。
+  # 现在打开只会多一个要排查的组件。
+  #
+  # rabbitmq:
+  #   image: rabbitmq:3.13-management-alpine
+  #   ports: ["5672:5672", "15672:15672"]
+
+volumes:
+  mysql-data:
+  redis-data:

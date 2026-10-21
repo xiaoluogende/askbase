@@ -1,0 +1,105 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: askbase
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  # 把 .env 当成 properties 读进来。这样 Key 只存在一个地方（.env），
+  # 既给 docker compose 用，也给应用用，不用两边各填一遍。
+  # optional: 前缀保证 .env 不存在时也能启动。
+  config:
+    import: optional:file:.env[.properties]
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: GMT+8
+    date-format: yyyy-MM-dd HH:mm:ss
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 3s
+      connect-timeout: 3s
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  default-produces-media-type: application/json
+
+askbase:
+  auth:
+    jwt:
+      # ⚠️ 生产环境必须通过环境变量覆盖，不要用这个默认值
+      secret: ${JWT_SECRET:dev-only-secret-please-change-me-0123456789abcdef}
+      expire-minutes: 720
+    users:
+      # 开发用户，后续换成 sys_user 表
+      admin: ${DEV_ADMIN_PASSWORD:admin123}
+
+  schema:
+    # 召回策略：keyword（无需 Key）| vector | hybrid（关键词 + 向量，推荐）
+    # 没配 embedding Key 时会自动降级为 keyword，不会启动失败
+    retriever: ${SCHEMA_RETRIEVER:hybrid}
+    # 召回几张表。给多了是干扰项，给少了 JOIN 不出来
+    top-k: 6
+    # 取值数 ≤ 此值的字符串列视为枚举，采样取值塞进 prompt
+    enum-max-distinct: 20
+    enum-sample-limit: 8
+    sample-row-limit: 2
+    reindex-on-startup: true
+    # 应用自己的表不能进索引，否则模型可能去查 sys_user
+    excluded-tables:
+      - sys_user
+      - sys_table_permission
+      - query_log
+
+  query:
+    # 执行模型生成的 SQL 用这个只读连接。和应用主库分开是硬性要求：
+    # 主库要写 sys_user/query_log，必须是读写账号；
+    # 执行不可信 SQL 必须用只有 SELECT 权限的账号。
+    readonly:
+      url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/${DB_NAME:askbase}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      username: ${DB_RO_USER:askbase_ro}
+      password: ${DB_RO_PASSWORD:askbase_ro123}
+      max-pool-size: 5
+      connection-timeout-ms: 3000
+      # 单条 SQL 超时（秒）。防止全表扫描占死连接
+      query-timeout-seconds: 5
+      # 结果集上限。超过会被截断并在返回里标 truncated
+      max-rows: 1000
+
+  ai:
+    # 对话走 DeepSeek：SQL 生成能力强、便宜（约 ¥1/百万 token）
+    chat:
+      base-url: ${AI_CHAT_BASE_URL:https://api.deepseek.com}
+      api-key: ${DEEPSEEK_API_KEY:}
+      model: ${AI_CHAT_MODEL:deepseek-chat}
+      # 必须为 0：否则同一个问题两次生成不同 SQL，评估无法复现
+      temperature: 0.0
+      max-tokens: 1024
+    # 向量走 DashScope：DeepSeek 没有 embedding 模型
+    embedding:
+      # ⚠️ 不要带 /v1 —— Spring AI 会自己拼 /v1/embeddings，
+      # 写成 .../compatible-mode/v1 会变成 /v1/v1/embeddings，报 404
+      base-url: ${AI_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+      api-key: ${DASHSCOPE_API_KEY:}
+      model: ${AI_EMBEDDING_MODEL:text-embedding-v3}
+      # 换模型时必须同步改这里，否则向量索引维度对不上
+      dimensions: 1024
+
+logging:
+  level:
+    com.askbase: info
+    org.springframework.web: info

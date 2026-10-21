@@ -1,0 +1,21 @@
+spring:
+  # 用 H2 内存库跑测试，CI 不需要启动 MySQL。
+  # MODE=MySQL 让 H2 尽量兼容 MySQL 语法，但别指望它完全等价——
+  # 真正的 SQL 兼容性要靠本地 MySQL 验证，H2 只负责「上下文能起来」。
+  datasource:
+    url: jdbc:h2:mem:askbase;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+askbase:
+  auth:
+    jwt:
+      secret: test-secret-must-be-at-least-32-bytes-long-0123456789
+      expire-minutes: 60
+    users:
+      admin: admin123
+
+logging:
+  level:
+    com.askbase: warn

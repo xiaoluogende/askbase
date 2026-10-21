@@ -1,0 +1,307 @@
+### Askbase 接口测试
+### ===========================================================================
+### ⚠️ 使用顺序（这一条最重要，不按顺序会报「未解析的变量 'token'」）
+###
+###   第 1 步：点「1. 登录」左边的绿三角 —— 它会把 token 存进全局变量
+###   第 2 步：再点其他需要登录的请求
+###
+###   如果你直接点后面的请求，IDEA 会提示「未解析的变量 'token'」。
+###   这不是代码问题、更不是什么 API Key 问题，就是还没登录。
+###   解法：滚回上面，先把「1. 登录」跑一遍。
+###
+### ===========================================================================
+### 其他说明：
+### - 每个请求左侧有绿色三角，点一下就能发，不用像 Swagger 那样点 Try it out
+### - token 由 client.global.set 自动传递，不用手动复制
+### - 0 号请求（健康检查）不需要登录，可以直接点
+### ===========================================================================
+
+@base = http://localhost:8080
+
+
+### ===== 公开接口（不需要 token，可以直接点）=====
+
+### 0. 健康检查（不查库，只证明 Web 层活着）
+GET {{base}}/api/health
+
+### 0.1 数据库健康检查（会真的查一次库，这条最能说明环境是否正常）
+### 期望：version 8.4.x、charset utf8mb4、tableCount 13、studentCount 375
+GET {{base}}/api/health/db
+
+
+### ===== 认证流程 =====
+
+### 1. 登录（把返回的 token 存进全局变量）
+POST {{base}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin123"
+}
+
+> {%
+    client.test("登录成功", function() {
+        client.assert(response.status === 200, "HTTP 状态应为 200");
+        client.assert(response.body.code === 0, "业务码应为 0，实际: " + response.body.code);
+    });
+    client.global.set("token", response.body.data.token);
+    client.log("token 已保存，长度 " + response.body.data.token.length);
+%}
+
+
+### 2. 当前用户（带 token，应该返回 admin）
+GET {{base}}/api/auth/me
+Authorization: Bearer {{token}}
+
+> {%
+    client.test("拿到当前用户", function() {
+        client.assert(response.body.code === 0, "业务码应为 0");
+        client.assert(response.body.data.username === "admin", "用户名应为 admin");
+    });
+%}
+
+
+### ===== 负向测试（验证安全边界，这些"应该失败"）=====
+
+### 3. 不带 token 访问受保护接口
+### 期望：{"code":40100,"msg":"缺少 Authorization 请求头"}
+GET {{base}}/api/auth/me
+
+### 4. 密码错误
+### 期望：{"code":40100,"msg":"用户名或密码错误"}
+POST {{base}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "wrong-password"
+}
+
+### 5. 伪造 token
+### 期望：{"code":40100,"msg":"无效的 token"}
+GET {{base}}/api/auth/me
+Authorization: Bearer this.is.not.a.jwt
+
+### 6. 参数校验（username 为空）
+### 期望：{"code":40000,"msg":"username 不能为空"}
+POST {{base}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "",
+  "password": "admin123"
+}
+
+
+### ===== Schema 索引与召回 =====
+### 下面几个都要 token —— 先跑上面「1. 登录」
+###
+### 提示：索引在应用启动时已经自动建好了（10 张表），
+###       所以「7. 重建索引」不是必须的，直接跑「10. 召回」就行。
+###       只有你改了表结构（加字段、改注释）之后，才需要重新跑 7。
+
+### 7. 重建索引（改了表结构后调一次）
+POST {{base}}/api/schema/reindex
+Authorization: Bearer {{token}}
+
+> {%
+    client.test("索引 10 张表", function() {
+        client.assert(response.body.data.tableCount === 10, "应为 10 张表，实际: " + response.body.data.tableCount);
+    });
+%}
+
+### 8. 列出已索引的表
+GET {{base}}/api/schema/tables
+Authorization: Bearer {{token}}
+
+### 9. 查看单张表的完整描述（就是喂给模型的那段文本）
+GET {{base}}/api/schema/tables/offer
+Authorization: Bearer {{token}}
+
+### 10. ★ 表召回
+### 期望：结果里有 offer 和 job_posting
+GET {{base}}/api/schema/search?q=薪资&topK=4
+Authorization: Bearer {{token}}
+
+> {%
+    client.test("薪资能召回 offer 和 job_posting", function() {
+        const tables = response.body.data.results.map(r => r.table);
+        client.assert(tables.includes("offer"), "应召回 offer，实际: " + tables);
+        client.assert(tables.includes("job_posting"), "应召回 job_posting，实际: " + tables);
+    });
+%}
+
+### 11. 多词查询（验证 IDF：稀有的"绩点"应该压过常见的"学生"）
+### 期望：student 排第一
+GET {{base}}/api/schema/search?q=学生的平均绩点&topK=4
+Authorization: Bearer {{token}}
+
+> {%
+    client.test("student 应排第一", function() {
+        client.assert(response.body.data.results[0].table === "student",
+            "第一名应为 student，实际: " + response.body.data.results[0].table);
+    });
+%}
+
+### 12. 预览 prompt（排查准确率问题的第一工具）
+### 直接看到"用户问这句话时，模型到底收到了什么 schema"
+GET {{base}}/api/schema/prompt?q=各专业平均薪资是多少&topK=2
+Authorization: Bearer {{token}}
+
+### 13. 无关问题应该召不回来
+### 期望：count = 0。召不回来是正确行为，不是缺陷——
+### 这时候应该拒答，而不是硬塞几张表让模型瞎猜
+GET {{base}}/api/schema/search?q=今天天气怎么样&topK=4
+Authorization: Bearer {{token}}
+
+### 14. 已知缺陷：同义词召不回（引入向量检索要解决的场景）
+### 期望：count = 0。注释里写的是"月薪"，用户问"工资"，一个词都不重合
+GET {{base}}/api/schema/search?q=工资待遇怎么样&topK=4
+Authorization: Bearer {{token}}
+
+
+### ===== SQL 安全校验与只读执行 =====
+### 这一层不涉及模型，输入是现成的 SQL。
+### 它的价值：①先把安全沙箱做扎实 ②自纠错要靠它返回的原始错误信息
+
+### 15. 正常查询（应通过，并自动补 LIMIT）
+POST {{base}}/api/query/validate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "sql": "SELECT name, gpa FROM student WHERE gpa > 3.5"
+}
+
+> {%
+    client.test("应通过并补 LIMIT", function() {
+        client.assert(response.body.data.valid === true, "应该通过");
+        client.assert(response.body.data.normalizedSql.includes("LIMIT"), "应自动补 LIMIT");
+    });
+%}
+
+### 16. ★ 安全边界：DELETE 必须被拒绝
+POST {{base}}/api/query/validate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "sql": "DELETE FROM student WHERE id = 1"
+}
+
+> {%
+    client.test("DELETE 必须被拦", function() {
+        client.assert(response.body.data.valid === false, "DELETE 不应该通过！");
+    });
+%}
+
+### 17. 安全边界：堆叠多条语句
+POST {{base}}/api/query/validate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "sql": "SELECT 1; DROP TABLE student"
+}
+
+### 18. 安全边界：危险函数
+POST {{base}}/api/query/validate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "sql": "SELECT SLEEP(10)"
+}
+
+### 19. 安全边界：探查系统库
+POST {{base}}/api/query/validate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "sql": "SELECT * FROM information_schema.tables"
+}
+
+### 20. 真实执行（4 表 JOIN，走只读账号）
+POST {{base}}/api/query/execute
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "sql": "SELECT m.name AS major, COUNT(DISTINCT s.id) AS cnt, ROUND(AVG(o.monthly_salary),2) AS avg_salary FROM offer o JOIN student s ON o.student_id = s.id JOIN major m ON s.major_id = m.id WHERE o.sign_status = '已签约' GROUP BY m.name ORDER BY avg_salary DESC"
+}
+
+> {%
+    client.test("应返回 6 个专业", function() {
+        client.assert(response.body.data.rowCount === 6, "应为 6 行，实际: " + response.body.data.rowCount);
+    });
+%}
+
+### 21. 截断检测（4313 行应被截到 1000 并标记 truncated）
+POST {{base}}/api/query/execute
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "sql": "SELECT * FROM job_application"
+}
+
+> {%
+    client.test("应标记截断", function() {
+        client.assert(response.body.data.rowCount === 1000, "应返回 1000 行");
+        client.assert(response.body.data.truncated === true, "truncated 应为 true");
+    });
+%}
+
+
+### ===== 端到端问答（需要 API Key）=====
+
+### 22. ★★ 端到端问答 —— 整个项目的主接口
+### 问题 → 召回表 → 模型生成 SQL → 安全校验 → 只读执行 → 返回结果
+POST {{base}}/api/query
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "question": "各专业平均薪资是多少"
+}
+
+> {%
+    client.test("应返回 6 个专业", function() {
+        client.assert(response.body.code === 0, "应成功: " + response.body.msg);
+        client.assert(response.body.data.rowCount === 6, "应为 6 行");
+    });
+    client.log("SQL: " + response.body.data.sql);
+    client.log("召回表: " + response.body.data.recalledTables);
+    client.log("耗时: " + response.body.data.totalMs + "ms，token " +
+               response.body.data.promptTokens + "+" + response.body.data.completionTokens);
+%}
+
+### 23. 同义词测试：问"工资"，注释里写的是"月薪"
+### 关键词召回会失败（0 条），向量召回能救回来——这就是 hybrid 的价值
+POST {{base}}/api/query
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "question": "哪个专业的工资待遇最好"
+}
+
+### 24. 窗口函数（整套题的分水岭）
+POST {{base}}/api/query
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "question": "每个学院平均起薪最高的专业是哪个"
+}
+
+### 25. 超出数据范围的问题，应该明确拒答而不是硬编
+POST {{base}}/api/query
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "question": "今天天气怎么样"
+}

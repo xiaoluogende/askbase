@@ -1,0 +1,18 @@
+# 统一行尾，避免 Windows 开发者提交 CRLF 后整个仓库显示"全部被修改"
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF，否则某些环境下无法执行
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件不做行尾转换
+*.jar binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+
+# 让 GitHub 语言统计把 SQL 和 Markdown 也算进去（否则会被 Java 完全盖住）
+*.sql linguist-language=SQL
+*.md linguist-documentation

@@ -1,0 +1,18 @@
+spring:
+  datasource:
+    # 应用主数据源（读写）：sys_user、查询日志等应用自己的表
+    # 注意：这里不是执行 NL2SQL 的连接。
+    # 另有独立只读数据源（askbase.query.readonly.*）专门执行模型生成的 SQL，见 ReadOnlyJdbc。
+    # 两者必须分开——用同一个读写账号去执行 LLM 生成的 SQL，等于把删库权限交给了模型。
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/${DB_NAME:askbase}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${DB_USER:askbase}
+    password: ${DB_PASSWORD:askbase123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+
+logging:
+  level:
+    com.askbase: debug
