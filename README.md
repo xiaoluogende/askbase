@@ -112,6 +112,29 @@ DASHSCOPE_API_KEY=sk-xxx     # 表结构向量化
 
 ---
 
+## 部署到服务器
+
+仓库里有 `docker-compose.prod.yml`，和开发用的那份有三处关键区别：
+
+| 项 | 开发 | 生产 |
+|---|---|---|
+| MySQL / Redis 端口 | 映射到 3307 / 6379 | **不映射**，只走容器内网 |
+| Redis 认证 | 无密码 | **必须设密码** |
+| 内存限制 | 无 | app 1.5G / mysql 1G / redis 512M |
+
+> 数据库端口不映射到公网，是这份配置里最重要的一条。
+> Redis 无密码 + 公网可达是全网扫描的头号目标，几小时内就会被挖矿程序接管。
+
+```bash
+cp .env.prod.example .env.prod     # 填真实密码
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+
+完整步骤（含阿里云 ECS 免费试用、安全组、常见问题）见
+[`docs/部署指南.md`](docs/部署指南.md)。
+
+---
+
 ## 使用示例
 
 ### 端到端问答
@@ -451,7 +474,8 @@ LLM 精排（问题 + 每张表的注释首句 + 字段名 → 返回排序后�
 | 多轮对话（历史随请求带上，服务端无状态） | ✅ 完成 |
 | 行级权限：按用户限制可访问的表 | 计划中 |
 | 前端界面（对话页 + 表格/图表渲染 + SQL 详情） | ✅ 完成 |
-| 线上部署 | 计划中 |
+| 生产部署配置（compose + 部署指南） | ✅ 完成 |
+| 线上部署（需服务器，见部署指南） | 待执行 |
 
 ---
 
@@ -483,7 +507,9 @@ askbase/
 ├── docs/
 │   ├── api-tests.http    接口测试用例
 │   └── images/           README 用的演示图（实际运行截图）
-├── docker-compose.yml
+├── docker-compose.yml        本地开发
+├── docker-compose.prod.yml   生产（不暴露数据库端口 + 内存限制）
+├── .env.prod.example         生产配置模板
 └── pom.xml
 ```
 

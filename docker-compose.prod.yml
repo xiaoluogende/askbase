@@ -1,0 +1,118 @@
+# Askbase 生产部署配置（2核4G 单机）
+#
+# 与 docker-compose.yml 的区别，每一条都对应一个真实的线上风险：
+#
+#   1. MySQL / Redis 不映射端口
+#      开发时映射 3307/6379 是为了本机工具能连。生产上映射出去 = 数据库暴露公网。
+#      Redis 无密码 + 公网可访问是经典的被挖矿场景，MySQL 3306 更是全网扫描的重点。
+#      容器之间走内部网络就够了，外部一个端口都不需要。
+#
+#   2. Redis 必须设密码
+#      就算不映射端口，同一台机器上其他容器/进程也能连。加 requirepass 是底线。
+#
+#   3. 每个服务限内存
+#      2核4G 的机器，MySQL + Redis + JVM 三个一起抢内存，不限制就会出现
+#      "某个进程被 OOM Killer 杀掉"，表现是服务突然连不上、日志里啥也没有。
+#      限制住之后，超限的是单个容器，不会拖垮整机。
+#
+#   4. MySQL 调小 buffer pool
+#      默认 128M 其实还行，但 performance_schema 默认开着会额外吃 100~200M。
+#      4G 的机器上关掉它，省下来的内存给 JVM。
+#
+# 用法：
+#   cp .env.prod.example .env.prod     # 填真实的密码和 Key
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f app
+
+name: askbase
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: askbase-mysql
+    restart: unless-stopped
+    environment:
+      # :? 语法 = 变量没设置就启动失败。生产配置不能靠默认值蒙混过关
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?必须在 .env.prod 里设置}
+      MYSQL_DATABASE: askbase
+      MYSQL_USER: ${DB_USER:?必须在 .env.prod 里设置}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?必须在 .env.prod 里设置}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
+      # 4G 机器上给 MySQL 设个上限，别让它把系统吃光
+      - --innodb-buffer-pool-size=256M
+      - --performance-schema=OFF
+      - --max-connections=80
+    # ⚠️ 刻意不写 ports：数据库只在内网可达
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/schema_auth.sql:/docker-entrypoint-initdb.d/02-auth.sql:ro
+      - ./db/seed_sample.sql:/docker-entrypoint-initdb.d/03-seed.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+    mem_limit: 1g
+
+  redis:
+    image: redis/redis-stack-server:7.4.0-v0
+    container_name: askbase-redis
+    restart: unless-stopped
+    environment:
+      # redis-stack-server 用 REDIS_ARGS 传启动参数
+      REDIS_ARGS: >-
+        --requirepass ${REDIS_PASSWORD:?必须在 .env.prod 里设置}
+        --maxmemory 384mb
+        --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: askbase-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # 容器之间用服务名当主机名，端口是容器内的 3306（不是开发时的 3307）
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: askbase
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_RO_USER: ${DB_RO_USER:-askbase_ro}
+      DB_RO_PASSWORD: ${DB_RO_PASSWORD:-askbase_ro123}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?必须在 .env.prod 里设置}
+      DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:?必须在 .env.prod 里设置}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      # 容器限制 1.5G，JVM 堆取 70% 约 1G，剩下的留给元空间和线程栈
+      JAVA_OPTS: "-XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8"
+    ports:
+      # 只暴露应用端口。这就是唯一对公网开放的端口。
+      - "8080:8080"
+    mem_limit: 1536m
+
+volumes:
+  mysql-data:
+  redis-data:

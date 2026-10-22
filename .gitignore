@@ -23,6 +23,7 @@ target/
 .env.*
 # 例外：示例文件必须提交，里面只有空的占位符
 !.env.example
+!.env.prod.example
 *.pem
 *.key
 application-local.yml
