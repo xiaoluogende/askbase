@@ -10,6 +10,8 @@
 ![MySQL](https://img.shields.io/badge/MySQL-8.4-4479A1)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
+![演示：输入问题 → 生成 SQL → 返回表格与图表](docs/images/demo.gif)
+
 ---
 
 ## 目录
@@ -43,6 +45,10 @@
 - SQL 必须通过四层校验：单条语句、必须是 SELECT（AST 判定而非字符串匹配）、危险函数黑名单、系统库拦截
 - 执行走独立只读账号，数据库层面无法写入——即使应用层校验全部失效
 - 5 秒查询超时、1000 行结果上限、超限标记 `truncated`
+
+界面（截图来自实际运行，数据为内置演示集）：
+
+![结果页](docs/images/screenshot.png)
 
 **工程**
 
@@ -410,7 +416,9 @@ askbase/
 │   ├── golden_set.jsonl     50 条评测用例
 │   ├── eval_askbase.py      端到端 EA 评估
 │   └── verify_gold_mysql.py 评测集自检（连真实 MySQL）
-├── docs/api-tests.http   接口测试用例
+├── docs/
+│   ├── api-tests.http    接口测试用例
+│   └── images/           README 用的演示图（实际运行截图）
 ├── docker-compose.yml
 └── pom.xml
 ```
