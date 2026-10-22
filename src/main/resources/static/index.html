@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Askbase · 用中文问你的数据</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232563EB'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='600' fill='white' text-anchor='middle'>A</text></svg>">
+</head>
+<body>
+
+<!-- 登录 -->
+<section id="login-view" class="login-wrap" hidden>
+  <form id="login-form" class="login-card">
+    <div class="brand">
+      <div class="brand-mark">A</div>
+      <div>
+        <h1>Askbase</h1>
+        <p class="muted">用中文问你的数据库</p>
+      </div>
+    </div>
+    <label>
+      用户名
+      <input id="username" type="text" value="admin" autocomplete="username" required>
+    </label>
+    <label>
+      密码
+      <input id="password" type="password" value="admin123" autocomplete="current-password" required>
+    </label>
+    <p id="login-error" class="error" hidden></p>
+    <button type="submit" class="primary">登录</button>
+    <p class="hint">演示环境默认 admin / admin123</p>
+  </form>
+</section>
+
+<!-- 主界面 -->
+<div id="app-view" hidden>
+  <header class="topbar">
+    <div class="brand small">
+      <div class="brand-mark">A</div>
+      <span class="brand-name">Askbase</span>
+    </div>
+    <div class="topbar-right">
+      <span id="retriever-badge" class="badge" title="当前召回策略"></span>
+      <button id="logout" class="ghost">退出</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h2>问一句话，拿到数据</h2>
+      <p class="muted">自动识别相关的表、生成 SQL、校验安全性后执行。你不需要会写 SQL。</p>
+
+      <form id="ask-form" class="ask-box">
+        <textarea id="question" rows="2" placeholder="例如：各专业平均薪资是多少" required></textarea>
+        <button type="submit" class="primary" id="ask-btn">提问</button>
+      </form>
+
+      <div class="examples" id="examples">
+        <span class="examples-label">试试：</span>
+      </div>
+    </section>
+
+    <section id="status" class="status" hidden>
+      <span class="spinner"></span>
+      <span id="status-text">正在理解问题…</span>
+    </section>
+
+    <section id="error" class="alert" hidden></section>
+
+    <section id="result" class="card" hidden>
+      <p id="explanation" class="explanation"></p>
+
+      <div class="meta" id="meta"></div>
+
+      <div id="chart-wrap" class="chart-wrap" hidden>
+        <canvas id="chart" role="img" aria-label="查询结果图表"></canvas>
+      </div>
+
+      <div class="table-wrap">
+        <table id="result-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <p id="truncated-note" class="hint" hidden></p>
+
+      <details class="sql-details">
+        <summary>SQL 与执行详情</summary>
+        <pre id="sql"></pre>
+        <div id="attempts" class="attempts"></div>
+      </details>
+    </section>
+
+    <section id="history-wrap" class="history" hidden>
+      <h3>最近提问</h3>
+      <ul id="history"></ul>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Askbase · NL2SQL Agent</span>
+    <a href="/swagger-ui.html" target="_blank" rel="noopener">接口文档</a>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

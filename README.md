@@ -35,6 +35,7 @@
 - 表结构自动采集：表/字段注释、枚举取值、外键关系、样例行
 - 四级召回策略可切换：关键词（无需 API Key）/ 向量 / 混合 / **LLM 精排**
 - 结构化输出：SQL、自然语言解释、建议图表类型
+- **内置 Web 界面**：登录、提问、表格与图表渲染、SQL 详情、重试记录，无需前端构建
 - **自纠错**：执行报错或结果为空时，把原始错误回喂模型重试；每一轮的 SQL 和失败原因都记录在响应里
 
 **安全**
@@ -78,7 +79,9 @@ docker compose --profile mysql up -d
 mvn spring-boot:run
 ```
 
-打开 **http://localhost:8080/swagger-ui.html**，用 `admin / admin123` 登录。
+打开 **http://localhost:8080** ，用 `admin / admin123` 登录。
+
+> 接口文档在 http://localhost:8080/swagger-ui.html 。
 
 > MySQL 容器映射到 **3307** 而不是 3306，避免和本机已有的 MySQL 冲突。
 
@@ -378,7 +381,7 @@ LLM 精排（问题 + 每张表的注释首句 + 字段名 → 返回排序后�
 | 召回重排（rerank） | 计划中 |
 | 多轮对话：指代消解与问题改写 | 计划中 |
 | 行级权限：按用户限制可访问的表 | 计划中 |
-| 前端界面（对话页 + 图表渲染） | 计划中 |
+| 前端界面（对话页 + 表格/图表渲染 + SQL 详情） | ✅ 完成 |
 | 线上部署 | 计划中 |
 
 ---
@@ -388,21 +391,22 @@ LLM 精排（问题 + 每张表的注释首句 + 字段名 → 返回排序后�
 ```
 askbase/
 ├── src/main/java/com/askbase/
-│   ├── ai/           模型装配、prompt 构造、SQL 生成与解析
+│   ├── ai/           模型装配、prompt 构造、SQL 生成、表重排
 │   ├── schema/       表结构采集、文档渲染、索引存储
-│   │   └── retriever/  关键词 / 向量 / 混合三种召回实现
+│   │   └── retriever/  关键词 / 向量 / 混合 / 重排 四种召回实现
 │   ├── query/        SQL 校验、只读执行、端到端编排
 │   ├── auth/         JWT 签发与拦截
 │   ├── common/       统一响应体、错误码、全局异常
 │   ├── config/       配置绑定与 Web 装配
 │   └── system/       健康检查
-├── src/test/         49 个单元测试
+├── src/main/resources/static/   前端（原生 HTML/CSS/JS，无构建步骤）
+├── src/test/         65 个单元测试
 ├── db/
 │   ├── schema.sql        10 张业务表 DDL
 │   ├── schema_auth.sql   用户 / 权限 / 查询日志
 │   └── seed_sample.sql   演示数据（约 1.2 万行）
 ├── eval/
-│   ├── golden_set.jsonl     10 条评测用例
+│   ├── golden_set.jsonl     50 条评测用例
 │   ├── eval_askbase.py      端到端 EA 评估
 │   └── verify_gold_mysql.py 评测集自检（连真实 MySQL）
 ├── docs/api-tests.http   接口测试用例
@@ -451,6 +455,7 @@ MySQL 客户端的默认字符集取决于操作系统 locale。容器里没有 
 - **只支持 MySQL 单库**，不支持多数据源或跨库查询
 - **没有多轮对话**，每次提问都是独立的
 - **权限只有表级白名单**，没有列级或行级过滤
+- **前端只做了单轮问答**，没有会话上下文；没有把查询历史持久化到数据库
 - **演示数据是生成的**，业务相关性由生成器人工设定，不代表真实分布
 
 ---
