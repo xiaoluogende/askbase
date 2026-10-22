@@ -50,6 +50,11 @@ public class PromptBuilder {
             其他情况一律 table。
             """;
 
+    // 曾经加过第 11 条"只 SELECT 问题所问的列，不要附加辅助列"，本意是修掉模型
+    // 多返回 listed_count / total_count 这类列的问题。实测反而更糟：模型把本该展示的列
+    // 也删了（"每个城市薪资最高的岗位"只返回岗位名不返回城市），EA 从 88% 掉回 84%。
+    // 结论：约束"少返回"的代价大于容忍"多返回"。多返回的列由前端按需隐藏即可。
+
     private final SemanticProperties semanticProperties;
 
     public PromptBuilder(SemanticProperties semanticProperties) {
