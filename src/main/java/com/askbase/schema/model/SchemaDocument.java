@@ -1,5 +1,7 @@
 package com.askbase.schema.model;
 
+import java.util.List;
+
 /**
  * 一张表的「可检索文本」。
  *
@@ -19,6 +21,8 @@ package com.askbase.schema.model;
  *                      命中 {@code major} 的表注释比命中 {@code college} 的字段注释更相关
  * @param searchable    字段级检索文本（字段名 + 字段注释 + 枚举值 + 外键指向的表），
  *                      <b>不含</b>表名和表注释——否则会和 {@link #header} 重复计分
+ * @param columnNames   字段名列表。给重排用：只给"招聘岗位表"这几个字，
+ *                      重排器不知道这张表里有 city 字段，就判断不出它和"工作地点"有关
  * @param tokenEstimate token 数粗估，用于控制 prompt 预算
  */
 public record SchemaDocument(
@@ -26,6 +30,7 @@ public record SchemaDocument(
         String text,
         String header,
         String searchable,
+        List<String> columnNames,
         int tokenEstimate
 ) {
 
@@ -36,5 +41,9 @@ public record SchemaDocument(
 
     public String searchableOrEmpty() {
         return searchable == null ? "" : searchable;
+    }
+
+    public List<String> columnNamesOrEmpty() {
+        return columnNames == null ? List.of() : columnNames;
     }
 }

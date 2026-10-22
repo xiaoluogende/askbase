@@ -34,6 +34,7 @@ public class SchemaDocumentBuilder {
                 text,
                 renderHeader(table),
                 renderSearchable(table),
+                table.columns().stream().map(ColumnSchema::name).toList(),
                 estimateTokens(text));
     }
 

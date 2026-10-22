@@ -49,9 +49,11 @@ askbase:
       admin: ${DEV_ADMIN_PASSWORD:admin123}
 
   schema:
-    # 召回策略：keyword（无需 Key）| vector | hybrid（关键词 + 向量，推荐）
-    # 没配 embedding Key 时会自动降级为 keyword，不会启动失败
-    retriever: ${SCHEMA_RETRIEVER:hybrid}
+    # 召回策略：keyword（无需 Key）| vector | hybrid | rerank（推荐）
+    # rerank = 混合召回取全部候选 → LLM 精排。实测 EA 从 94-96% 提到 96-100%，
+    # 代价是每次问答多一次模型调用（约 +0.5s）。
+    # 缺 Key 时会自动降级：没有 chat key → keyword，只有 chat 没有 embedding → 也是 keyword
+    retriever: ${SCHEMA_RETRIEVER:rerank}
     # 召回几张表。给多了是干扰项，给少了 JOIN 不出来
     top-k: 6
     # 取值数 ≤ 此值的字符串列视为枚举，采样取值塞进 prompt

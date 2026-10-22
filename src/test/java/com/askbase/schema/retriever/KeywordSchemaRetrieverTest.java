@@ -18,7 +18,7 @@ class KeywordSchemaRetrieverTest {
 
     /** 用真实 schema 的片段构造，保证测试和线上行为一致 */
     private static SchemaDocument doc(String table, String header, String body) {
-        return new SchemaDocument(table, "### 表 " + table, header, body, 100);
+        return new SchemaDocument(table, "### 表 " + table, header, body, java.util.List.of(), 100);
     }
 
     @BeforeEach
