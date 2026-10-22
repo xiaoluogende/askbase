@@ -40,11 +40,24 @@ public class SqlGenerator {
     }
 
     public GenerationResult generate(String question, String schemaText) {
+        return generate(question, schemaText, null);
+    }
+
+    /**
+     * @param correctionFeedback 上一轮失败的原因。为 {@code null} 表示首轮生成。
+     *                           非空时会把错误原样附在用户消息里，让模型定向修正，
+     *                           而不是从头再猜一遍
+     */
+    public GenerationResult generate(String question, String schemaText, String correctionFeedback) {
         ChatModel chatModel = chatModelProvider.getIfAvailable();
         if (chatModel == null) {
             throw new BizException(ErrorCode.LLM_ERROR,
                     "未配置对话模型 API Key。请在 .env 里填 DEEPSEEK_API_KEY 后重启");
         }
+
+        String userMessage = correctionFeedback == null
+                ? promptBuilder.user(question, schemaText)
+                : promptBuilder.userWithCorrection(question, schemaText, correctionFeedback);
 
         long start = System.currentTimeMillis();
         ChatResponse response;
@@ -52,7 +65,7 @@ public class SqlGenerator {
             response = ChatClient.builder(chatModel).build()
                     .prompt()
                     .system(promptBuilder.system())
-                    .user(promptBuilder.user(question, schemaText))
+                    .user(userMessage)
                     .call()
                     .chatResponse();
         } catch (Exception e) {

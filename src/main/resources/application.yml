@@ -66,6 +66,11 @@ askbase:
       - query_log
 
   query:
+    # 最多尝试几轮（含首轮）。1 = 关闭自纠错。
+    # 默认 2：首生成 + 一次纠错。再加收益递减——同一份 prompt 下连错两次，第三次多半还是错。
+    max-attempts: ${QUERY_MAX_ATTEMPTS:2}
+    # 结果为空时是否重试。空结果可能是正确答案，但实测更多是枚举值写错导致的假空。
+    retry-on-empty-result: true
     # 执行模型生成的 SQL 用这个只读连接。和应用主库分开是硬性要求：
     # 主库要写 sys_user/query_log，必须是读写账号；
     # 执行不可信 SQL 必须用只有 SELECT 权限的账号。
@@ -98,6 +103,29 @@ askbase:
       model: ${AI_EMBEDDING_MODEL:text-embedding-v3}
       # 换模型时必须同步改这里，否则向量索引维度对不上
       dimensions: 1024
+
+  # 业务口径（语义层）。
+  #
+  # ⚠️ 默认关闭，这是实测结论不是保守：
+  #   无口径 50% → 1 条口径 40% → 6 条口径 30%
+  # 加规则会让准确率单调下降。原因是规则占用了 prompt 的注意力，
+  # 模型对 schema 字段名的关注度下降，反而开始幻觉不存在的列。
+  #
+  # 同样的口径改成写进表注释（offer 表注释里"必须只算已签约"），
+  # 效果比写成 prompt 规则好——注释跟 schema 绑在一起，不额外占注意力。
+  #
+  # 想开的话先做对照实验：--askbase.semantic.enabled=false 跑一遍评估，
+  # 再开启跑一遍，差值就是这批规则的真实价值。
+  semantic:
+    enabled: ${SEMANTIC_ENABLED:false}
+    rules:
+      - "统计薪资、起薪、平均月薪时，只统计 sign_status = '已签约' 的 offer；未签约和已违约的不计入"
+      # 以下规则实测未带来提升，保留作候选
+      # - "就业率 = 已签约学生数 / 毕业生数。分子分母都按 DISTINCT 学生统计"
+      # - "employment_stat 中 major_id IS NULL 表示学院级汇总，不能与专业级明细混算"
+      # - "「就业地点」用 company.city 近似"
+      # - "LEFT JOIN 的附加过滤条件必须写在 ON 里，不能写在 WHERE 里"
+      # - "平均分是百分制，GPA 满分 4.00，两者不要混用"
 
 logging:
   level:

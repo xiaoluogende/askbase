@@ -2,6 +2,8 @@ package com.askbase.ai;
 
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 /**
  * 构造发给模型的 prompt。
  *
@@ -18,11 +20,14 @@ import org.springframework.stereotype.Component;
  *   <li><b>日期用字符串</b>——模型爱写 {@code DATE_SUB(NOW(), INTERVAL 1 YEAR)}，
  *       和数据集里的历史日期对不上</li>
  * </ul>
+ *
+ * <p>另外注入 {@link SemanticProperties} 里的业务口径——那是"怎么算才算对"的定义，
+ * 表结构描述里给不出来。
  */
 @Component
 public class PromptBuilder {
 
-    private static final String SYSTEM_PROMPT = """
+    private static final String BASE_PROMPT = """
             你是 MySQL 专家。根据给定的表结构，把用户的自然语言问题转换成一条 MySQL 查询。
 
             必须遵守：
@@ -45,8 +50,29 @@ public class PromptBuilder {
             其他情况一律 table。
             """;
 
+    private final SemanticProperties semanticProperties;
+
+    public PromptBuilder(SemanticProperties semanticProperties) {
+        this.semanticProperties = semanticProperties;
+    }
+
+    /**
+     * 拼出 system prompt。
+     *
+     * <p>业务口径单独成段并标明"最高优先级"——混在普通规则里会被稀释。
+     * 实测：口径散落在规则中间时，模型遵循率明显低于单独成段。
+     */
     public String system() {
-        return SYSTEM_PROMPT;
+        StringBuilder sb = new StringBuilder(BASE_PROMPT);
+
+        if (semanticProperties.isEnabled() && !semanticProperties.getRules().isEmpty()) {
+            sb.append("\n业务口径（最高优先级，与上面规则冲突时以本节为准）：\n");
+            List<String> rules = semanticProperties.getRules();
+            for (int i = 0; i < rules.size(); i++) {
+                sb.append(i + 1).append(". ").append(rules.get(i)).append('\n');
+            }
+        }
+        return sb.toString();
     }
 
     /**
@@ -61,5 +87,30 @@ public class PromptBuilder {
 
                 用户问题：%s
                 """.formatted(schemaText, question);
+    }
+
+    /**
+     * 纠错轮的用户消息：在原问题后面附上上一次失败的原因。
+     *
+     * <p>关键是把错误<b>原样</b>给模型，不要自己总结。数据库报
+     * {@code Unknown column 'c.course_name'}，就照抄这句——
+     * 模型对原始 SQL 错误信息的理解能力，比对我们转述的理解能力强得多。
+     */
+    public String userWithCorrection(String question, String schemaText, String feedback) {
+        return """
+                以下是可用的表结构：
+
+                %s
+
+                用户问题：%s
+
+                ⚠️ 上一次尝试失败了，原因如下：
+                %s
+
+                请根据上面的错误修正你的查询。注意：
+                - 只修正错误的部分，不要推翻整个思路
+                - 如果错误是"结果为空"，优先检查过滤条件里的枚举值是否和 schema 中的一致
+                - 如果错误是"列不存在"，请严格对照 schema 里的字段名
+                """.formatted(schemaText, question, feedback);
     }
 }
