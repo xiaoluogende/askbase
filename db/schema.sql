@@ -161,7 +161,7 @@ CREATE TABLE job_posting (
   id                INT           NOT NULL AUTO_INCREMENT COMMENT '岗位ID',
   company_id        INT           NOT NULL                COMMENT '招聘企业ID，关联 company.id',
   title             VARCHAR(128)  NOT NULL                COMMENT '岗位名称，如"Java后端开发工程师""算法工程师"',
-  city              VARCHAR(32)   NOT NULL                COMMENT '工作城市',
+  city              VARCHAR(32)   NOT NULL                COMMENT '工作城市，即学生实际就业地点。判断"留在某地就业"用这个字段，不要用 company.city（那是企业总部城市）',
   salary_min        INT           DEFAULT NULL            COMMENT '月薪下限，单位：元',
   salary_max        INT           DEFAULT NULL            COMMENT '月薪上限，单位：元',
   headcount         SMALLINT      NOT NULL DEFAULT 1      COMMENT '招聘人数',
@@ -241,7 +241,7 @@ CREATE TABLE employment_stat (
   CONSTRAINT fk_stat_college FOREIGN KEY (college_id) REFERENCES college (id),
   CONSTRAINT fk_stat_major   FOREIGN KEY (major_id)   REFERENCES major (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  COMMENT='就业统计月度快照表。就业率 = employed_count / graduated_count。用于趋势分析';
+  COMMENT='就业统计月度快照表。就业率 = employed_count / graduated_count，employed_count 含签约、灵活就业和升学。同时含学院级（major_id 为 NULL）和专业级两种粒度，按专业统计需过滤 major_id IS NOT NULL';
 
 
 -- ============================================================================
