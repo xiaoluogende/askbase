@@ -41,21 +41,65 @@ def http_json(method, url, payload=None, token=None, timeout=180):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def normalize_rows(rows):
-    """把结果集变成可比较的形式：忽略列名和列顺序，只比值的多重集合"""
-    out = []
-    for row in rows:
-        vals = []
-        for v in row.values():
-            if v is None:
-                vals.append("NULL")
-            elif isinstance(v, float):
-                # 浮点误差：3.13312 和 3.133120001 应该算同一个答案
-                vals.append(f"{v:.4f}")
-            else:
-                vals.append(str(v).strip())
-        out.append(tuple(sorted(vals)))
-    return sorted(out)
+def normalize_value(v):
+    """保留数值类型（用于带容差比较），其余转字符串"""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, (int, float)):
+        return float(v)
+    return str(v).strip()
+
+
+def extract_rows(rows):
+    """把 API 返回的行转成「每行一个值列表」"""
+    return [[normalize_value(v) for v in row.values()] for row in rows]
+
+
+def values_equal(a, b, tol):
+    if a is None or b is None:
+        return a is None and b is None
+    if isinstance(a, float) and isinstance(b, float):
+        # 相对容差 + 绝对下限：3.173 和 3.1731234 应该算同一个答案
+        return abs(a - b) <= max(tol, abs(a) * tol)
+    return str(a) == str(b)
+
+
+def multiset_match(a_vals, b_vals, tol):
+    """忽略列顺序比较两行的值"""
+    if len(a_vals) != len(b_vals):
+        return False
+    remaining = list(b_vals)
+    for x in a_vals:
+        for i, y in enumerate(remaining):
+            if values_equal(x, y, tol):
+                remaining.pop(i)
+                break
+        else:
+            return False
+    return True
+
+
+def rows_equal(model_rows, gold_rows, tol=0.01):
+    """
+    忽略行序和列序比较两个结果集，数值带 1% 容差。
+
+    ⚠️ 这个函数曾经用「格式化成 4 位小数字符串再比」的写法，导致
+    gold 写了 ROUND(...,3) 而模型没写 ROUND 时被判错（3.1730 vs 3.1731）。
+    把精度差异当成答案错误，会系统性地低估准确率。
+    """
+    if len(model_rows) != len(gold_rows):
+        return False
+    remaining = list(gold_rows)
+    for mr in model_rows:
+        for i, gr in enumerate(remaining):
+            if multiset_match(mr, gr, tol):
+                remaining.pop(i)
+                break
+        else:
+            return False
+    return True
 
 
 def main():
@@ -89,7 +133,7 @@ def main():
             # ① gold SQL 的真实结果
             gold = http_json("POST", f"{args.base}/api/query/execute",
                              {"sql": c["gold_sql"]}, token)
-            gold_rows = normalize_rows(gold["data"]["rows"]) if gold["code"] == 0 else None
+            gold_rows = extract_rows(gold["data"]["rows"]) if gold["code"] == 0 else None
 
             # ② 模型端到端的结果
             ask = http_json("POST", f"{args.base}/api/query", {"question": q}, token)
@@ -100,7 +144,7 @@ def main():
                 details.append((c["id"], q, "error", ask["msg"][:120]))
                 continue
 
-            model_rows = normalize_rows(ask["data"]["rows"])
+            model_rows = extract_rows(ask["data"]["rows"])
             rounds = len(ask["data"].get("attempts") or [])
             rounds_total += rounds
             if rounds > 1:
@@ -111,7 +155,7 @@ def main():
                 continue
 
             round_tag = f" ({rounds}轮)" if rounds > 1 else ""
-            if model_rows == gold_rows:
+            if rows_equal(model_rows, gold_rows):
                 passed += 1
                 print(f"  [{c['id']:>2}] ✓ EA  {ask['data']['totalMs']:>5}ms  "
                       f"{ask['data']['rowCount']} 行{round_tag}  {q}")
