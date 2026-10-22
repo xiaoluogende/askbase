@@ -39,6 +39,7 @@
 - **多轮对话**：支持「那 2024 届呢」「排除实习岗位」这类追问，服务端无状态
 - 结构化输出：SQL、自然语言解释、建议图表类型
 - **内置 Web 界面**：登录、提问、表格与图表渲染、SQL 详情、重试记录，无需前端构建
+- **可接入任意 MySQL 库**：库名和账号都在 `.env` 里，换库只改配置，不改代码
 - **自纠错**：执行报错或结果为空时，把原始错误回喂模型重试；每一轮的 SQL 和失败原因都记录在响应里
 
 **安全**
@@ -93,7 +94,6 @@ mvn spring-boot:run
 
 > MySQL 容器映射到 **3307** 而不是 3306，避免和本机已有的 MySQL 冲突。
 
-日常启动、重启、排错的命令速查见 [`docs/本地开发.md`](docs/本地开发.md)。
 
 ### 配置模型（可选）
 
@@ -132,8 +132,8 @@ cp .env.prod.example .env.prod     # 填真实密码
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
-完整步骤（含阿里云 ECS 免费试用、安全组、常见问题）见
-[`docs/部署指南.md`](docs/部署指南.md)。
+首次部署要注意三件事：安全组只开 22 和 8080；数据库端口不要映射到公网；
+容器内存要限制（4G 机器上不限制会被 OOM Killer 杀进程）。
 
 ---
 
@@ -508,8 +508,6 @@ askbase/
 │   └── verify_gold_mysql.py 评测集自检（连真实 MySQL）
 ├── docs/
 │   ├── api-tests.http    接口测试用例
-│   ├── 本地开发.md        启动/重启/排错速查
-│   ├── 部署指南.md        从买服务器到上线的完整步骤
 │   └── images/           README 用的演示图（实际运行截图）
 ├── docker-compose.yml        本地开发
 ├── docker-compose.prod.yml   生产（不暴露数据库端口 + 内存限制）
