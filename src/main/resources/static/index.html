@@ -112,7 +112,9 @@
   </article>
 </template>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<!-- 本地托管而不是 CDN：服务器带宽只有 1Mbps，且 jsdelivr 在国内不稳定。
+     挂了的话图表不显示（代码有降级，只显示表格），但演示效果差很多。 -->
+<script src="vendor/chart.umd.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

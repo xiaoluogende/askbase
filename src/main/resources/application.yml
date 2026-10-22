@@ -1,6 +1,14 @@
 server:
   port: 8080
   shutdown: graceful
+  # 开 gzip：1Mbps 的带宽下这个差别很明显。
+  # Chart.js 196KB -> 约 65KB，首页 CSS/JS 也能压到三分之一。
+  compression:
+    enabled: true
+    # text/javascript 必须显式写上：Spring 对 .js 文件返回的是 text/javascript，
+    # 不是 application/javascript，写错了就不会压缩（实测 Chart.js 196KB 一个字节都没压）
+    mime-types: text/html,text/css,text/javascript,application/javascript,application/json,image/svg+xml
+    min-response-size: 1024
 
 spring:
   application:
