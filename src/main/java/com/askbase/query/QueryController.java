@@ -1,6 +1,7 @@
 package com.askbase.query;
 
 import com.askbase.common.BizException;
+import com.askbase.ai.ConversationTurn;
 import com.askbase.common.ErrorCode;
 import com.askbase.common.R;
 import io.swagger.v3.oas.annotations.Operation;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -32,20 +34,27 @@ public class QueryController {
     private final SqlExecutor executor;
     private final QueryService queryService;
     private final ReadOnlyDataSourceProperties properties;
+    private final QueryProperties queryProperties;
 
     public QueryController(SqlValidator validator, SqlExecutor executor,
                            QueryService queryService,
-                           ReadOnlyDataSourceProperties properties) {
+                           ReadOnlyDataSourceProperties properties,
+                           QueryProperties queryProperties) {
         this.validator = validator;
         this.executor = executor;
         this.queryService = queryService;
         this.properties = properties;
+        this.queryProperties = queryProperties;
     }
 
     public record SqlRequest(String sql) {
     }
 
-    public record AskRequest(String question) {
+    /**
+     * @param history 之前几轮（问题 + SQL）。不传即单轮问答。
+     *                服务端会按 askbase.query.max-history-turns 截断，客户端传多少都不会失控。
+     */
+    public record AskRequest(String question, List<ConversationTurn> history) {
     }
 
     @PostMapping
@@ -55,7 +64,24 @@ public class QueryController {
         if (request.question() == null || request.question().isBlank()) {
             throw new BizException(ErrorCode.BAD_REQUEST, "question 不能为空");
         }
-        return R.ok(queryService.ask(request.question()));
+        return R.ok(queryService.ask(request.question(), trimHistory(request.history())));
+    }
+
+    /**
+     * 只保留最近 N 轮。
+     *
+     * <p>放在服务端做而不是信任客户端：历史会进 prompt，
+     * 客户端传 100 轮就能把 token 成本拉爆，也可能撑爆上下文窗口。
+     */
+    private List<ConversationTurn> trimHistory(List<ConversationTurn> history) {
+        if (history == null || history.isEmpty()) {
+            return List.of();
+        }
+        int max = Math.max(0, queryProperties.getMaxHistoryTurns());
+        if (history.size() <= max) {
+            return history;
+        }
+        return history.subList(history.size() - max, history.size());
     }
 
     @PostMapping("/validate")

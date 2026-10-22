@@ -73,6 +73,8 @@ askbase:
     max-attempts: ${QUERY_MAX_ATTEMPTS:2}
     # 结果为空时是否重试。空结果可能是正确答案，但实测更多是枚举值写错导致的假空。
     retry-on-empty-result: true
+    # 多轮对话最多带几轮历史进 prompt（服务端截断，客户端传多少都不会失控）
+    max-history-turns: 3
     # 执行模型生成的 SQL 用这个只读连接。和应用主库分开是硬性要求：
     # 主库要写 sys_user/query_log，必须是读写账号；
     # 执行不可信 SQL 必须用只有 SELECT 权限的账号。

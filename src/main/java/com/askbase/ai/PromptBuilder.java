@@ -85,37 +85,60 @@ public class PromptBuilder {
      * @param schemaText 召回的表结构描述（由 SchemaDocumentBuilder 渲染）
      */
     public String user(String question, String schemaText) {
-        return """
-                以下是可用的表结构：
+        return user(question, schemaText, List.of(), null);
+    }
 
-                %s
-
-                用户问题：%s
-                """.formatted(schemaText, question);
+    public String user(String question, String schemaText, String correctionFeedback) {
+        return user(question, schemaText, List.of(), correctionFeedback);
     }
 
     /**
-     * 纠错轮的用户消息：在原问题后面附上上一次失败的原因。
+     * 组装用户消息：表结构 + 对话历史 + 当前问题 +（可选）纠错提示。
      *
-     * <p>关键是把错误<b>原样</b>给模型，不要自己总结。数据库报
-     * {@code Unknown column 'c.course_name'}，就照抄这句——
-     * 模型对原始 SQL 错误信息的理解能力，比对我们转述的理解能力强得多。
+     * <p>历史只放「问题 + SQL」，不放结果集——见 {@link ConversationTurn} 的说明。
+     *
+     * <p>为什么要明确告诉模型"可能是追问，也可能是新问题"：
+     * 如果只说"参考上文"，模型会把所有问题都当成追问，
+     * 用户开新话题时它反而被上一轮的 SQL 带偏。给它一个判断依据更稳。
      */
-    public String userWithCorrection(String question, String schemaText, String feedback) {
-        return """
-                以下是可用的表结构：
+    public String user(String question, String schemaText,
+                       List<ConversationTurn> history, String correctionFeedback) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("以下是可用的表结构：\n\n").append(schemaText).append('\n');
 
-                %s
+        if (history != null && !history.isEmpty()) {
+            sb.append("\n以下是之前几轮对话（用户问题 → 当时生成的 SQL）：\n");
+            for (int i = 0; i < history.size(); i++) {
+                ConversationTurn t = history.get(i);
+                sb.append("\n【第 ").append(i + 1).append(" 轮】\n");
+                sb.append("问题：").append(t.question()).append('\n');
+                if (t.sql() != null && !t.sql().isBlank()) {
+                    sb.append("SQL：").append(t.sql()).append('\n');
+                }
+            }
+            sb.append("""
 
-                用户问题：%s
+                    注意：
+                    - 如果当前问题是追问（省略了主语、只改动某个条件、或以"那…呢""其中""只看""再"开头），
+                      请结合上文理解完整意图，生成一条能独立执行的完整 SQL。
+                    - 如果当前问题是全新的独立问题，忽略上文，按当前问题生成。
+                    """);
+        }
 
-                ⚠️ 上一次尝试失败了，原因如下：
-                %s
+        sb.append("\n当前问题：").append(question).append('\n');
 
-                请根据上面的错误修正你的查询。注意：
-                - 只修正错误的部分，不要推翻整个思路
-                - 如果错误是"结果为空"，优先检查过滤条件里的枚举值是否和 schema 中的一致
-                - 如果错误是"列不存在"，请严格对照 schema 里的字段名
-                """.formatted(schemaText, question, feedback);
+        if (correctionFeedback != null) {
+            sb.append("""
+
+                    ⚠️ 上一次尝试失败了，原因如下：
+                    """).append(correctionFeedback).append("""
+
+                    请根据上面的错误修正你的查询。注意：
+                    - 只修正错误的部分，不要推翻整个思路
+                    - 如果错误是"结果为空"，优先检查过滤条件里的枚举值是否和 schema 中的一致
+                    - 如果错误是"列不存在"，请严格对照 schema 里的字段名
+                    """);
+        }
+        return sb.toString();
     }
 }

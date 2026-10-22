@@ -12,6 +12,8 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 /**
  * 调用大模型生成 SQL。
  *
@@ -40,24 +42,24 @@ public class SqlGenerator {
     }
 
     public GenerationResult generate(String question, String schemaText) {
-        return generate(question, schemaText, null);
+        return generate(new GenerationInput(question, schemaText, List.of(), null));
     }
 
     /**
-     * @param correctionFeedback 上一轮失败的原因。为 {@code null} 表示首轮生成。
-     *                           非空时会把错误原样附在用户消息里，让模型定向修正，
-     *                           而不是从头再猜一遍
+     * 参数用 {@link GenerationInput} 打包而不是继续加位置参数。
+     *
+     * <p>加多轮对话时这个方法已经有 4 个参数了（问题、schema、历史、纠错反馈），
+     * 再来一个就得靠数位置，调用方极易传错顺序——而且编译器不会提醒你。
      */
-    public GenerationResult generate(String question, String schemaText, String correctionFeedback) {
+    public GenerationResult generate(GenerationInput input) {
         ChatModel chatModel = chatModelProvider.getIfAvailable();
         if (chatModel == null) {
             throw new BizException(ErrorCode.LLM_ERROR,
                     "未配置对话模型 API Key。请在 .env 里填 DEEPSEEK_API_KEY 后重启");
         }
 
-        String userMessage = correctionFeedback == null
-                ? promptBuilder.user(question, schemaText)
-                : promptBuilder.userWithCorrection(question, schemaText, correctionFeedback);
+        String userMessage = promptBuilder.user(
+                input.question(), input.schemaText(), input.history(), input.correctionFeedback());
 
         long start = System.currentTimeMillis();
         ChatResponse response;
@@ -78,6 +80,22 @@ public class SqlGenerator {
 
         SqlSuggestion suggestion = parse(content);
         return new GenerationResult(suggestion, elapsed, promptTokens(response), completionTokens(response));
+    }
+
+    /**
+     * 生成请求。
+     *
+     * @param question          当前问题
+     * @param schemaText        召回的表结构文本
+     * @param history           之前的对话轮次，可为空
+     * @param correctionFeedback 上一轮失败原因，首轮为 null
+     */
+    public record GenerationInput(
+            String question,
+            String schemaText,
+            List<ConversationTurn> history,
+            String correctionFeedback
+    ) {
     }
 
     /**

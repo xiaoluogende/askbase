@@ -305,3 +305,59 @@ Content-Type: application/json
 {
   "question": "今天天气怎么样"
 }
+
+
+### ===== 多轮对话 =====
+### 历史由客户端带上，服务端无状态。只传「问题 + SQL」，不传结果集。
+### 服务端会按 askbase.query.max-history-turns（默认 3）截断。
+
+### 26. 第一轮（不带 history）
+POST {{base}}/api/query
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "question": "各专业分别有多少名学生？"
+}
+
+> {%
+    client.global.set("turn1_sql", response.body.data.sql);
+    client.test("第一轮应返回 6 行", function() {
+        client.assert(response.body.data.rowCount === 6, "应为 6 行");
+        client.assert(response.body.data.historyTurns === 0, "首轮 historyTurns 应为 0");
+    });
+%}
+
+### 27. ★ 追问：带上一轮的历史
+### 期望：正确理解成"各专业学生人数 + 只要 2024 届"，且 historyTurns = 1
+POST {{base}}/api/query
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "question": "只看2024届毕业生的",
+  "history": [
+    {
+      "question": "各专业分别有多少名学生？",
+      "sql": "{{turn1_sql}}"
+    }
+  ]
+}
+
+> {%
+    client.test("追问应带上上下文", function() {
+        client.assert(response.body.data.historyTurns === 1, "historyTurns 应为 1");
+    });
+    client.log("追问 SQL: " + response.body.data.sql);
+%}
+
+### 28. 不带历史的同一个追问（对照）
+### 期望：模型多半会拒答，说"问题不完整"
+### 这就是 baseline —— 多轮的价值就体现在这个差距上
+POST {{base}}/api/query
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "question": "只看2024届毕业生的"
+}

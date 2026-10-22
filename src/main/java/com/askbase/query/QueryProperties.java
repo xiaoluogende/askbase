@@ -30,6 +30,23 @@ public class QueryProperties {
      */
     private boolean retryOnEmptyResult = true;
 
+    /**
+     * 最多带几轮历史进 prompt。
+     *
+     * <p>默认 3：追问通常紧接上一轮，更早的上下文帮助有限，
+     * 但每轮历史会多占 100~200 token，带太多反而稀释当前问题。
+     * 超出部分由服务端截断，客户端传多少都不会失控。
+     */
+    private int maxHistoryTurns = 3;
+
+    public int getMaxHistoryTurns() {
+        return maxHistoryTurns;
+    }
+
+    public void setMaxHistoryTurns(int maxHistoryTurns) {
+        this.maxHistoryTurns = maxHistoryTurns;
+    }
+
     public int getMaxAttempts() {
         return maxAttempts;
     }

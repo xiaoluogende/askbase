@@ -1,5 +1,6 @@
 package com.askbase.query;
 
+import com.askbase.ai.ConversationTurn;
 import com.askbase.ai.SqlGenerator;
 import com.askbase.ai.SqlSuggestion;
 import com.askbase.common.BizException;
@@ -59,10 +60,27 @@ public class QueryService {
     }
 
     public AskResult ask(String question) {
+        return ask(question, List.of());
+    }
+
+    /**
+     * 端到端问答，支持多轮。
+     *
+     * <h3>追问的召回问题</h3>
+     * "那 2024 届呢" 这种追问几乎没有可检索的词——召回会直接崩掉（分数全是噪声）。
+     * 所以<b>检索用的 query 要拼接上一轮的问题</b>：
+     * 上一轮问"各专业平均薪资"，这一轮问"那 2024 届呢"，
+     * 拼成"各专业平均薪资 那 2024 届呢"再去召回，关键词和向量才有东西可比。
+     *
+     * <p>但生成时给模型的是原始问题 + 历史，不是拼接后的串——
+     * 拼接只是为了召回，不能污染生成意图。
+     */
+    public AskResult ask(String question, List<ConversationTurn> history) {
         long start = System.currentTimeMillis();
 
-        // ① 召回相关表
-        List<SchemaRetriever.ScoredTable> hits = schemaService.search(question, null);
+        // ① 召回相关表（追问时用「上一轮问题 + 当前问题」做查询扩展）
+        String retrievalQuery = buildRetrievalQuery(question, history);
+        List<SchemaRetriever.ScoredTable> hits = schemaService.search(retrievalQuery, null);
         if (hits.isEmpty()) {
             throw new BizException(ErrorCode.SQL_REJECTED,
                     "没有找到与问题相关的表。可能是问题超出了当前数据范围，或者表注释不够清晰导致召回失败");
@@ -80,8 +98,8 @@ public class QueryService {
         int completionTokens = 0;
 
         for (int i = 1; i <= maxAttempts; i++) {
-            SqlGenerator.GenerationResult generation =
-                    sqlGenerator.generate(question, schemaText, feedback);
+            SqlGenerator.GenerationResult generation = sqlGenerator.generate(
+                    new SqlGenerator.GenerationInput(question, schemaText, history, feedback));
             modelMs += generation.elapsedMs();
             promptTokens += generation.promptTokens();
             completionTokens += generation.completionTokens();
@@ -124,6 +142,7 @@ public class QueryService {
 
                 return new AskResult(
                         question,
+                        history == null ? 0 : history.size(),
                         schemaService.retrieverName(),
                         tables,
                         validation.sql(),
@@ -165,6 +184,28 @@ public class QueryService {
     }
 
     /**
+     * 构造检索用的 query。
+     *
+     * <p>追问往往是省略句（"那 2024 届呢""只看西安的"），单独拿它去召回，
+     * 关键词几乎全不命中，向量也只是泛泛的语义相似——结果就是召回一堆无关表。
+     * 拼上上一轮的问题，相当于把省略的主语补回来。
+     *
+     * <p>只拼<b>最近一轮</b>而不是全部历史：更早的轮次容易引入干扰，
+     * 而且追问通常紧接上一轮。
+     */
+    static String buildRetrievalQuery(String question, List<ConversationTurn> history) {
+        if (history == null || history.isEmpty()) {
+            return question;
+        }
+        ConversationTurn last = history.get(history.size() - 1);
+        if (last.question() == null || last.question().isBlank()) {
+            return question;
+        }
+        return last.question() + " " + question;
+    }
+
+    /**
+     * @param historyTurns     本次带了几轮历史（0 表示单轮）
      * @param retriever        实际使用的召回策略
      * @param recalledTables   召回的表
      * @param sql              最终执行的 SQL（已补 LIMIT）
@@ -178,6 +219,7 @@ public class QueryService {
      */
     public record AskResult(
             String question,
+            int historyTurns,
             String retriever,
             List<String> recalledTables,
             String sql,

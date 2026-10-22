@@ -80,12 +80,75 @@ class PromptBuilderTest {
     @Test
     void 纠错消息应包含原始错误() {
         String user = builder(List.of(), true)
-                .userWithCorrection("统计课程平均分", "### 表 course",
+                .user("统计课程平均分", "### 表 course",
                         "SQL 执行报错：Unknown column 'c.course_name' in 'field list'");
 
         assertThat(user).contains("上一次尝试失败了");
         // 原始错误必须原样保留，不能被转述成"列名写错了"之类
         assertThat(user).contains("Unknown column 'c.course_name' in 'field list'");
         assertThat(user).contains("### 表 course");
+    }
+
+    @Test
+    void 无历史时不应出现对话段落() {
+        String user = builder(List.of(), true).user("各专业平均薪资", "### 表 offer", List.of(), null);
+
+        assertThat(user).doesNotContain("之前几轮对话");
+        assertThat(user).doesNotContain("追问");
+        assertThat(user).contains("当前问题：各专业平均薪资");
+    }
+
+    @Test
+    void 有历史时应带上前几轮的问题和SQL() {
+        List<ConversationTurn> history = List.of(
+                new ConversationTurn("各专业分别有多少名学生？", "SELECT m.name, COUNT(*) FROM ..."),
+                new ConversationTurn("那 2023 届呢？", "SELECT m.name, COUNT(*) FROM ... WHERE graduation_year=2023")
+        );
+
+        String user = builder(List.of(), true)
+                .user("只看2024届毕业生的", "### 表 student", history, null);
+
+        assertThat(user).contains("之前几轮对话");
+        assertThat(user).contains("【第 1 轮】");
+        assertThat(user).contains("【第 2 轮】");
+        assertThat(user).contains("各专业分别有多少名学生？");
+        assertThat(user).contains("graduation_year=2023");
+        assertThat(user).contains("当前问题：只看2024届毕业生的");
+    }
+
+    @Test
+    void 有历史时必须告诉模型可能是追问也可能是新问题() {
+        // 只给历史不说判断依据的话，模型会把所有问题都当追问，
+        // 用户开新话题时反而被上一轮的 SQL 带偏
+        List<ConversationTurn> history = List.of(
+                new ConversationTurn("各专业有多少学生", "SELECT ..."));
+
+        String user = builder(List.of(), true).user("今天天气", "### 表 student", history, null);
+
+        assertThat(user).contains("追问");
+        assertThat(user).contains("全新的独立问题");
+    }
+
+    @Test
+    void 历史里SQL为空时不应渲染出null() {
+        List<ConversationTurn> history = List.of(new ConversationTurn("上一轮失败了", null));
+
+        String user = builder(List.of(), true).user("再试一次", "### 表 student", history, null);
+
+        assertThat(user).doesNotContain("SQL：null");
+        assertThat(user).contains("上一轮失败了");
+    }
+
+    @Test
+    void 历史与纠错可以同时存在() {
+        List<ConversationTurn> history = List.of(
+                new ConversationTurn("各专业有多少学生", "SELECT ..."));
+
+        String user = builder(List.of(), true)
+                .user("只看2024届", "### 表 student", history, "Unknown column 'x'");
+
+        assertThat(user).contains("之前几轮对话");
+        assertThat(user).contains("上一次尝试失败了");
+        assertThat(user).contains("Unknown column 'x'");
     }
 }

@@ -1,10 +1,11 @@
 /* Askbase 前端逻辑
-   纯原生 JS，无构建步骤。所有请求同源，不需要 CORS。 */
+   纯原生 JS，无构建步骤。所有请求同源，不需要 CORS。
+
+   多轮对话的设计：服务端不存会话，历史由前端带上。
+   每次提问把之前几轮的「问题 + SQL」一起发过去，服务端据此理解追问。
+   只传问题和 SQL、不传结果集——结果集可能上千行，会把 prompt 撑爆。 */
 
 const TOKEN_KEY = 'askbase.token';
-const HISTORY_KEY = 'askbase.history';
-const MAX_HISTORY = 6;
-
 const EXAMPLES = [
   '各专业平均薪资是多少',
   '每个学院平均起薪最高的专业是哪个',
@@ -12,23 +13,21 @@ const EXAMPLES = [
   '投递超过20次但一个offer都没拿到的学生有多少人',
   '各投递渠道的录用率分别是多少'
 ];
+const FOLLOW_UP_HINT = '追问示例：只看2024届的 · 排除实习岗位 · 哪个最多？';
 
 const $ = (id) => document.getElementById(id);
-let chartInstance = null;
+
+/* 对话状态。history 只存 {question, sql}，是发给服务端的东西 */
+const state = {
+  history: [],
+  charts: [],
+};
 
 /* ---------------- 会话 ---------------- */
 
-function getToken() {
-  return sessionStorage.getItem(TOKEN_KEY);
-}
-
-function setToken(t) {
-  sessionStorage.setItem(TOKEN_KEY, t);
-}
-
-function clearToken() {
-  sessionStorage.removeItem(TOKEN_KEY);
-}
+const getToken = () => sessionStorage.getItem(TOKEN_KEY);
+const setToken = (t) => sessionStorage.setItem(TOKEN_KEY, t);
+const clearToken = () => sessionStorage.removeItem(TOKEN_KEY);
 
 function showLogin(message) {
   $('app-view').hidden = true;
@@ -44,7 +43,7 @@ function showApp() {
   $('login-view').hidden = true;
   $('app-view').hidden = false;
   renderExamples();
-  renderHistory();
+  syncNewChatButton();
 }
 
 /* ---------------- 请求 ---------------- */
@@ -63,9 +62,7 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
     body: body ? JSON.stringify(body) : undefined
   });
 
-  if (resp.status === 401) {
-    throw new Error('UNAUTHORIZED');
-  }
+  if (resp.status === 401) throw new Error('UNAUTHORIZED');
 
   let payload;
   try {
@@ -73,10 +70,7 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
   } catch {
     throw new Error('服务返回了非 JSON 内容（HTTP ' + resp.status + '）');
   }
-
-  if (payload.code !== 0) {
-    throw new Error(payload.msg || '请求失败');
-  }
+  if (payload.code !== 0) throw new Error(payload.msg || '请求失败');
   return payload.data;
 }
 
@@ -89,15 +83,11 @@ $('login-form').addEventListener('submit', async (e) => {
   errEl.hidden = true;
   btn.disabled = true;
   btn.textContent = '登录中…';
-
   try {
     const data = await request('/api/auth/login', {
       method: 'POST',
       auth: false,
-      body: {
-        username: $('username').value.trim(),
-        password: $('password').value
-      }
+      body: { username: $('username').value.trim(), password: $('password').value }
     });
     setToken(data.token);
     showApp();
@@ -112,9 +102,11 @@ $('login-form').addEventListener('submit', async (e) => {
 
 $('logout').addEventListener('click', () => {
   clearToken();
-  resetResult();
+  resetConversation();
   showLogin();
 });
+
+$('new-chat').addEventListener('click', resetConversation);
 
 /* ---------------- 提问 ---------------- */
 
@@ -136,9 +128,6 @@ async function ask(question) {
   const btn = $('ask-btn');
   btn.disabled = true;
   btn.textContent = '处理中…';
-  $('error').hidden = true;
-  $('result').hidden = true;
-  $('history-wrap').hidden = true;
   $('status').hidden = false;
 
   const steps = ['正在理解问题…', '正在召回相关表…', '正在生成 SQL…', '正在校验与执行…'];
@@ -149,84 +138,125 @@ async function ask(question) {
     $('status-text').textContent = steps[step];
   }, 700);
 
+  // 先插入一个空的轮次，让用户立刻看到自己的问题
+  const turn = createTurn(question);
+  $('thread').appendChild(turn.el);
+  turn.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
   try {
-    const data = await request('/api/query', { method: 'POST', body: { question } });
-    renderResult(data);
-    pushHistory(question, data.totalMs);
+    const data = await request('/api/query', {
+      method: 'POST',
+      body: { question, history: state.history }
+    });
+
+    // 只有成功的轮次才进历史——失败的 SQL 不该影响后续理解
+    state.history.push({ question, sql: data.sql });
+    fillTurn(turn, data);
+    syncNewChatButton();
+    $('retriever-badge').textContent = data.retriever || '';
   } catch (err) {
     if (err.message === 'UNAUTHORIZED') {
       clearToken();
       showLogin('登录已过期，请重新登录');
       return;
     }
-    const el = $('error');
-    el.textContent = err.message;
-    el.hidden = false;
-    $('history-wrap').hidden = false;
+    showTurnError(turn, err.message);
   } finally {
     clearInterval(timer);
     $('status').hidden = true;
     btn.disabled = false;
     btn.textContent = '提问';
+    $('question').value = '';
+    // preventScroll 必须加：默认的 focus() 会把页面滚回输入框，
+    // 用户刚拿到答案就被弹回顶部，看不到结果
+    $('question').focus({ preventScroll: true });
   }
 }
 
-/* ---------------- 渲染结果 ---------------- */
-
-function resetResult() {
-  $('result').hidden = true;
-  $('error').hidden = true;
-  $('status').hidden = true;
-  $('history-wrap').hidden = true;
-  if (chartInstance) {
-    chartInstance.destroy();
-    chartInstance = null;
-  }
+function resetConversation() {
+  state.history = [];
+  state.charts.forEach((c) => c.destroy());
+  state.charts = [];
+  $('thread').innerHTML = '';
+  $('retriever-badge').textContent = '';
+  syncNewChatButton();
+  $('question').value = '';
+  $('question').focus({ preventScroll: true });
 }
 
-function renderResult(data) {
-  $('result').hidden = false;
-  $('retriever-badge').textContent = data.retriever || '';
+function syncNewChatButton() {
+  $('new-chat').hidden = state.history.length === 0;
+}
 
-  $('explanation').textContent = data.explanation || '（模型未给出解释）';
+/* ---------------- 渲染一轮对话 ---------------- */
 
-  const metaParts = [];
-  metaParts.push('召回 <code>' + (data.recalledTables || []).join(', ') + '</code>');
-  metaParts.push('召回策略 <code>' + data.retriever + '</code>');
-  metaParts.push('耗时 ' + (data.totalMs / 1000).toFixed(2) + 's');
-  metaParts.push('token ' + data.promptTokens + ' + ' + data.completionTokens);
+function createTurn(question) {
+  const tpl = $('turn-tpl').content.cloneNode(true);
+  const el = tpl.querySelector('.turn');
+  tpl.querySelector('.turn-q-text').textContent = question;
+  tpl.querySelector('.turn-body').hidden = true;
+  return {
+    el,
+    body: tpl.querySelector('.turn-body'),
+    error: tpl.querySelector('.turn-error'),
+    explanation: tpl.querySelector('.explanation'),
+    meta: tpl.querySelector('.meta'),
+    chartWrap: tpl.querySelector('.chart-wrap'),
+    canvas: tpl.querySelector('canvas'),
+    thead: tpl.querySelector('thead'),
+    tbody: tpl.querySelector('tbody'),
+    truncated: tpl.querySelector('.truncated-note'),
+    sql: tpl.querySelector('pre'),
+    attempts: tpl.querySelector('.attempts'),
+  };
+}
+
+function showTurnError(turn, message) {
+  turn.body.hidden = true;
+  turn.error.textContent = message;
+  turn.error.hidden = false;
+}
+
+function fillTurn(turn, data) {
+  turn.body.hidden = false;
+
+  turn.explanation.textContent = data.explanation || '（模型未给出解释）';
+
+  const meta = [];
+  meta.push('召回 <code>' + (data.recalledTables || []).join(', ') + '</code>');
+  meta.push('策略 <code>' + data.retriever + '</code>');
+  meta.push((data.totalMs / 1000).toFixed(2) + 's');
+  meta.push('token ' + data.promptTokens + ' + ' + data.completionTokens);
+  if (data.historyTurns > 0) {
+    meta.push('<span style="color:#2563eb">带 ' + data.historyTurns + ' 轮上下文</span>');
+  }
   if (data.attempts && data.attempts.length > 1) {
-    metaParts.push('<span style="color:#b45309">重试 ' + (data.attempts.length - 1) + ' 次后成功</span>');
+    meta.push('<span style="color:#b45309">重试 ' + (data.attempts.length - 1) + ' 次后成功</span>');
   }
-  $('meta').innerHTML = metaParts.map((m) => '<span>' + m + '</span>').join('');
+  turn.meta.innerHTML = meta.map((m) => '<span>' + m + '</span>').join('');
 
-  renderTable(data.columns, data.rows);
-  renderChart(data.chartType, data.columns, data.rows);
+  renderTable(turn, data.columns, data.rows);
+  renderChart(turn, data.chartType, data.columns, data.rows);
 
-  $('sql').textContent = data.sql;
+  turn.sql.textContent = data.sql;
 
-  const attemptsEl = $('attempts');
-  attemptsEl.innerHTML = '';
+  turn.attempts.innerHTML = '';
   if (data.attempts && data.attempts.length > 1) {
     data.attempts.forEach((a) => {
       const div = document.createElement('div');
-      const status = a.failure
+      div.innerHTML = '第 ' + a.index + ' 轮：' + (a.failure
         ? '<span class="fail">✗ ' + escapeHtml(a.failure) + '</span>'
-        : '✓ 返回 ' + a.rowCount + ' 行';
-      div.innerHTML = '第 ' + a.index + ' 轮：' + status;
-      attemptsEl.appendChild(div);
+        : '✓ 返回 ' + a.rowCount + ' 行');
+      turn.attempts.appendChild(div);
     });
   }
 
-  const noteEl = $('truncated-note');
   if (data.truncated) {
-    noteEl.textContent = '结果超过 ' + data.rowCount + ' 行，已截断，只展示前 ' + data.rowCount + ' 行。';
-    noteEl.hidden = false;
+    turn.truncated.textContent = '结果超过上限，只展示前 ' + data.rowCount + ' 行。';
+    turn.truncated.hidden = false;
   } else {
-    noteEl.hidden = true;
+    turn.truncated.hidden = true;
   }
-
-  $('history-wrap').hidden = false;
 }
 
 function isNumericColumn(rows, col) {
@@ -244,17 +274,14 @@ function formatCell(v, numeric) {
   return String(v);
 }
 
-function renderTable(columns, rows) {
-  const thead = $('result-table').querySelector('thead');
-  const tbody = $('result-table').querySelector('tbody');
-
+function renderTable(turn, columns, rows) {
   const numericCols = columns.map((c) => isNumericColumn(rows, c));
 
-  thead.innerHTML = '<tr>' + columns
+  turn.thead.innerHTML = '<tr>' + columns
     .map((c, i) => '<th class="' + (numericCols[i] ? 'num' : '') + '">' + escapeHtml(c) + '</th>')
     .join('') + '</tr>';
 
-  tbody.innerHTML = rows
+  turn.tbody.innerHTML = rows
     .map((row) => '<tr>' + columns
       .map((c, i) => '<td class="' + (numericCols[i] ? 'num' : '') + '">' +
         escapeHtml(formatCell(row[c], numericCols[i])) + '</td>')
@@ -262,30 +289,23 @@ function renderTable(columns, rows) {
     .join('');
 }
 
-function renderChart(type, columns, rows) {
-  const wrap = $('chart-wrap');
-  if (chartInstance) {
-    chartInstance.destroy();
-    chartInstance = null;
-  }
-
-  // 图表只对「第一列是类别、第二列是数值」的结果有意义
+function renderChart(turn, type, columns, rows) {
   const canChart = rows.length >= 2 && rows.length <= 20 && columns.length >= 2 &&
     type !== 'table' && isNumericColumn(rows, columns[1]) &&
     typeof Chart !== 'undefined';
 
   if (!canChart) {
-    wrap.hidden = true;
+    turn.chartWrap.hidden = true;
     return;
   }
-  wrap.hidden = false;
+  turn.chartWrap.hidden = false;
 
   const labels = rows.map((r) => String(r[columns[0]]));
   const values = rows.map((r) => Number(r[columns[1]]) || 0);
+  const isPie = type === 'pie';
   const palette = ['#2563eb', '#0ea5e9', '#14b8a6', '#f59e0b', '#8b5cf6', '#ec4899'];
 
-  const isPie = type === 'pie';
-  const config = {
+  const chart = new Chart(turn.canvas, {
     type: isPie ? 'doughnut' : type,
     data: {
       labels,
@@ -303,20 +323,18 @@ function renderChart(type, columns, rows) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { display: isPie, position: 'right', labels: { boxWidth: 10, font: { size: 12 } } },
-        tooltip: { enabled: true }
+        legend: { display: isPie, position: 'right', labels: { boxWidth: 10, font: { size: 12 } } }
       },
       scales: isPie ? {} : {
         y: { beginAtZero: true, grid: { color: '#f0efed' }, ticks: { font: { size: 11 }, color: '#78716c' } },
         x: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#57534e', autoSkip: false, maxRotation: 40 } }
       }
     }
-  };
-
-  chartInstance = new Chart($('chart'), config);
+  });
+  state.charts.push(chart);
 }
 
-/* ---------------- 示例与历史 ---------------- */
+/* ---------------- 示例 ---------------- */
 
 function renderExamples() {
   const box = $('examples');
@@ -332,42 +350,12 @@ function renderExamples() {
     });
     box.appendChild(chip);
   });
-}
 
-function getHistory() {
-  try {
-    return JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-function pushHistory(question, totalMs) {
-  const list = getHistory().filter((h) => h.q !== question);
-  list.unshift({ q: question, ms: Math.round(totalMs) });
-  sessionStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, MAX_HISTORY)));
-  renderHistory();
-}
-
-function renderHistory() {
-  const list = getHistory();
-  const wrap = $('history-wrap');
-  const ul = $('history');
-  ul.innerHTML = '';
-  if (!list.length) {
-    wrap.hidden = true;
-    return;
-  }
-  wrap.hidden = false;
-  list.forEach((h) => {
-    const li = document.createElement('li');
-    li.innerHTML = '<span>' + escapeHtml(h.q) + '</span><span>' + h.ms + 'ms</span>';
-    li.addEventListener('click', () => {
-      $('question').value = h.q;
-      ask(h.q);
-    });
-    ul.appendChild(li);
-  });
+  // 追问提示：让用户知道可以接着问
+  const hint = document.createElement('span');
+  hint.className = 'chip-hint';
+  hint.textContent = FOLLOW_UP_HINT;
+  box.appendChild(hint);
 }
 
 /* ---------------- 工具 ---------------- */

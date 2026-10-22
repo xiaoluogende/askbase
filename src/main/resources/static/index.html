@@ -42,6 +42,7 @@
     </div>
     <div class="topbar-right">
       <span id="retriever-badge" class="badge" title="当前召回策略"></span>
+      <button id="new-chat" class="ghost" hidden>新对话</button>
       <button id="logout" class="ghost">退出</button>
     </div>
   </header>
@@ -49,7 +50,7 @@
   <main>
     <section class="hero">
       <h2>问一句话，拿到数据</h2>
-      <p class="muted">自动识别相关的表、生成 SQL、校验安全性后执行。你不需要会写 SQL。</p>
+      <p class="muted">自动识别相关的表、生成 SQL、校验安全性后执行。可以接着追问，比如「那 2024 届呢」。</p>
 
       <form id="ask-form" class="ask-box">
         <textarea id="question" rows="2" placeholder="例如：各专业平均薪资是多少" required></textarea>
@@ -66,37 +67,7 @@
       <span id="status-text">正在理解问题…</span>
     </section>
 
-    <section id="error" class="alert" hidden></section>
-
-    <section id="result" class="card" hidden>
-      <p id="explanation" class="explanation"></p>
-
-      <div class="meta" id="meta"></div>
-
-      <div id="chart-wrap" class="chart-wrap" hidden>
-        <canvas id="chart" role="img" aria-label="查询结果图表"></canvas>
-      </div>
-
-      <div class="table-wrap">
-        <table id="result-table">
-          <thead></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-
-      <p id="truncated-note" class="hint" hidden></p>
-
-      <details class="sql-details">
-        <summary>SQL 与执行详情</summary>
-        <pre id="sql"></pre>
-        <div id="attempts" class="attempts"></div>
-      </details>
-    </section>
-
-    <section id="history-wrap" class="history" hidden>
-      <h3>最近提问</h3>
-      <ul id="history"></ul>
-    </section>
+    <div id="thread" class="thread"></div>
   </main>
 
   <footer class="footer">
@@ -104,6 +75,42 @@
     <a href="/swagger-ui.html" target="_blank" rel="noopener">接口文档</a>
   </footer>
 </div>
+
+<!-- 一轮对话的模板 -->
+<template id="turn-tpl">
+  <article class="turn">
+    <div class="turn-q">
+      <span class="turn-q-mark">问</span>
+      <span class="turn-q-text"></span>
+    </div>
+
+    <div class="turn-body">
+      <p class="explanation"></p>
+      <div class="meta"></div>
+
+      <div class="chart-wrap" hidden>
+        <canvas role="img" aria-label="查询结果图表"></canvas>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <p class="truncated-note hint" hidden></p>
+
+      <details class="sql-details">
+        <summary>SQL 与执行详情</summary>
+        <pre></pre>
+        <div class="attempts"></div>
+      </details>
+    </div>
+
+    <div class="turn-error alert" hidden></div>
+  </article>
+</template>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="app.js"></script>
