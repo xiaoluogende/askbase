@@ -93,6 +93,8 @@ mvn spring-boot:run
 
 > MySQL 容器映射到 **3307** 而不是 3306，避免和本机已有的 MySQL 冲突。
 
+日常启动、重启、排错的命令速查见 [`docs/本地开发.md`](docs/本地开发.md)。
+
 ### 配置模型（可选）
 
 在 `.env` 里填入：
@@ -506,6 +508,8 @@ askbase/
 │   └── verify_gold_mysql.py 评测集自检（连真实 MySQL）
 ├── docs/
 │   ├── api-tests.http    接口测试用例
+│   ├── 本地开发.md        启动/重启/排错速查
+│   ├── 部署指南.md        从买服务器到上线的完整步骤
 │   └── images/           README 用的演示图（实际运行截图）
 ├── docker-compose.yml        本地开发
 ├── docker-compose.prod.yml   生产（不暴露数据库端口 + 内存限制）
