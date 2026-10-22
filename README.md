@@ -69,7 +69,8 @@
 ```bash
 git clone https://github.com/<your-name>/askbase.git
 cd askbase
-cp .env.example .env
+# 只在 .env 不存在时复制——直接 cp 会把你已经填好的 API Key 冲掉
+[ -f .env ] || cp .env.example .env
 
 # 起 MySQL(3307) + Redis(6379)
 # 首次启动会自动建 13 张表并灌入演示数据，约 40 秒

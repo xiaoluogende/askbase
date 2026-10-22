@@ -22,6 +22,11 @@
 
 * { box-sizing: border-box; }
 
+/* 必须放在所有规则之前并加 !important：
+   .login-wrap{display:grid} 和 .status{display:flex} 的优先级高于浏览器默认的
+   [hidden]{display:none}，不加这条的话 hidden 属性会失效，登录页和主界面会同时显示。 */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -153,10 +158,19 @@ textarea { resize: vertical; line-height: 1.5; }
 .badge:empty { display: none; }
 
 /* ---------- 主体 ---------- */
+/* 用 flex 列布局把页脚顶到底部：内容不满一屏时页脚不会飘在中间 */
+#app-view {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
 main {
+  width: 100%;
   max-width: 860px;
   margin: 0 auto;
   padding: 40px 24px 64px;
+  flex: 1 0 auto;
 }
 
 .hero { margin-bottom: 28px; }
@@ -331,9 +345,11 @@ th.num { text-align: right; }
 
 /* ---------- 页脚 ---------- */
 .footer {
+  width: 100%;
   max-width: 860px;
   margin: 0 auto;
-  padding: 0 24px 40px;
+  padding: 0 24px 32px;
+  flex-shrink: 0;
   display: flex;
   justify-content: space-between;
   font-size: 12.5px;
